@@ -1,7 +1,15 @@
 use clap::Parser;
 use comm::{recv_msg, send_msg, Message, Result};
+use rmp_serde::{from_read, Serializer};
+use serde::Serialize;
 use std::{
-    collections::HashMap, net::SocketAddr, path::PathBuf, sync::{LazyLock, RwLock}, time::Duration
+    collections::HashMap,
+    fs::{self, File},
+    io::{Seek, SeekFrom, Write},
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{LazyLock, RwLock},
+    time::Duration,
 };
 use tokio::net::{TcpListener, TcpStream};
 
@@ -58,6 +66,7 @@ async fn handle_client(mut conn: TcpStream) {
 #[tokio::main]
 async fn main() -> Result<()> {
     const TIMEOUT: Duration = Duration::from_secs(2);
+    const DISK_SYNC_PERIOD: Duration = Duration::from_secs(10);
     // This guy serves multple connections.
     // So I guess our storage node should listen to one of multiple possibilites.
     // Here is where workspace-shared code comes in: serde + message type
@@ -70,6 +79,58 @@ async fn main() -> Result<()> {
     //    advance to the main request loop, which responds to GET/PUT/HB.
 
     let args = StoreArgs::parse();
+
+    // Synchronize hash table to disk.
+    // I'd like to abstract this out into its own function but this lambda returns a JoinHandle<!>,
+    // where the bottom type `!` is "experimental"
+    // We have the nightly compiler so ig it's fine.
+    // I really just want a semaphore but this'll probably do.
+    let (quit_tx, quit_rx) = std::sync::mpsc::channel();
+    let sync_handle = args.node_state.map(|path| {
+        let mut backing_file = if fs::exists(&path).expect("Bigger FS problem:") {
+            eprintln!("[INFO] Attempting to recover node state @ {path:?}");
+            let file = File::options()
+                .read(true)
+                .write(true)
+                .open(path)
+                .expect("Bigger FS problem:");
+            let got_map = from_read(&file).expect("Failed to deserialize:");
+            eprintln!("[INFO] Recovered state {got_map:#?}");
+            *TABLE_SERVICE.write().expect("Lock already poisoned?!") = got_map;
+            file
+        } else {
+            eprintln!("[INFO] Creating backing file @ {path:?}");
+            File::create_new(path).expect("Bigger FS problem:")
+        };
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(DISK_SYNC_PERIOD);
+            let mut table_buffer = Vec::new();
+            loop {
+                interval.tick().await;
+                {
+                    let table_guard = TABLE_SERVICE.read().expect("Lock poisoned :(");
+                    table_guard
+                        .serialize(&mut Serializer::new(&mut table_buffer))
+                        .expect("Failed to serialize table!");
+                    backing_file
+                        .write_all(&mut table_buffer[..])
+                        .expect("Couldn't fully write state!");
+                    backing_file
+                        .seek(SeekFrom::Start(0))
+                        .expect("Couldn't seek.");
+                    table_buffer.clear();
+                    eprintln!("[INFO] Synced to disk!");
+                }
+
+                if let Ok(()) = quit_rx.try_recv() {
+                    eprintln!("[INFO] Main storage loop exited! Quitting...");
+                    break;
+                }
+            }
+        })
+    });
+
     let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
     let listener = TcpListener::bind(addr).await?;
 
@@ -105,10 +166,26 @@ async fn main() -> Result<()> {
     // });
 
     // Now we can handle connections normally.
-    loop {
-        use tokio::time::timeout;
-        let (conn, _) = listener.accept().await?;
-        eprintln!("[INFO] Got connection!");
-        tokio::spawn(timeout(TIMEOUT, handle_client(conn)));
+    let conn_loop = tokio::spawn(async move {
+        loop {
+            use tokio::time::timeout;
+            let (conn, _) = listener
+                .accept()
+                .await
+                .expect("Failed to accept connection!");
+            eprintln!("[INFO] Got connection!");
+            tokio::spawn(timeout(TIMEOUT, handle_client(conn)));
+        }
+    });
+
+    // If something horrible goes wrong, ensure the synchronizing loop can finish.
+    // We need to signal to the sync loop to shutdown.
+    let _ = conn_loop.await;
+    if let Some(handle) = sync_handle {
+        if let Err(e) = quit_tx.send(()) {
+            eprintln!("[WARN] Couldn't send quit signal to disk coroutine because: {e}");
+        }
+        let _ = handle.await;
     }
+    Ok(())
 }

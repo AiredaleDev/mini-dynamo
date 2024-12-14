@@ -7,3 +7,5 @@ edition = "2021"
 comm = { path = "../comm" }
 clap = { workspace = true }
 tokio = { workspace = true }
+serde = { workspace = true }
+rmp-serde = { workspace = true }

@@ -42,6 +42,9 @@ pub async fn recv_msg(conn: &mut TcpStream) -> Result<Message> {
     let mut ser_buf = [0u8; MSG_SIZE];
     eprintln!("[INFO] Trying to read a message.");
     conn.read_exact(&mut ser_buf[..]).await?;
+    // Regarding VLE, I tried just passing the conn into this fn but nooo,
+    // this TcpStream implements AsyncRead, but serde only understands io::Read.
+    // Maybe there's an async version of this? Colored functions smh.
     let message = from_read(&ser_buf[..])?;
     eprintln!("[INFO] Got '{message:?}'");
 

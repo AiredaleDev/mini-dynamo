@@ -1,26 +1,42 @@
 use clap::Parser;
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
+use tokio::net::TcpStream;
+
+mod ring_hash;
 
 struct Manager {
-    store_conns: Vec<Node>,
+    nodes: Vec<Node>,
     reps: usize,
 }
 
 struct Node {
-    conn: TcpStream,
-    status: NodeStatus,
+    conn: Option<TcpStream>,
+    port: u16,
 }
 
-enum NodeStatus {
-    Running,
-    Down,
+impl Node {
+    pub async fn connect_on_port(port: u16) -> Self {
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let conn = TcpStream::connect(addr).await;
+        if let Err(e) = &conn {
+            eprintln!("Failed to connect to '{addr:?}': {e}");
+        }
+        let conn = conn.ok();
+
+        Self { conn, port }
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.conn.is_some()
+    }
 }
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct ManagerArgs {
     /// Port of manager node.
-    mgr_port: Option<u16>,
+    #[arg(short, long, default_value_t = 50051)]
+    port: u16,
     /// List of storage node ports to try to connect to.
     store_ports: Option<Vec<u16>>,
     /// Replication factor.
@@ -50,14 +66,25 @@ async fn main() {
 
     let args = ManagerArgs::parse();
 
-    // Note: `Vec` allocates lazily, so you can cheaply construct a Vec w/o
-    // allocating a backing buffer until you push something.
-    let store_conns = args.store_ports.map_or(Vec::new(), |ports| {
-        ports
-            .into_iter()
-            .map(|p| SocketAddr::from(([127, 0, 0, 1], p)))
-            .collect()
-    });
+    // I had this nice FP-style solution only for async semantics to ruin it.
+    // Even though this function is in an async block, the lambdas I passed in also had to be
+    // marked as async to call async code, which would cause nodes' type to be `Vec<async block>`
+    // even though said block only did effects. Maybe it's because iterators are lazy?
+    let nodes = {
+        let ports = args.store_ports.unwrap_or(Vec::new());
+        let mut nodes = Vec::with_capacity(ports.len());
+        for p in ports {
+            // We don't return an error if we fail to connect because we figure the user may want to
+            // remember this node or try to connect to it as soon as possible.
+            nodes.push(Node::connect_on_port(p).await);
+        }
+        nodes
+    };
+
+    let mut mgr_state = Manager {
+        nodes,
+        reps: args.reps,
+    };
 
     println!("Hello, world!");
 }

@@ -4,5 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+comm = { path = "../comm" }
 clap = { workspace = true }
+sha1 = "0.10.6"
 tokio = { workspace = true }
