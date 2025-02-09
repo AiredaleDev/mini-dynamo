@@ -124,14 +124,14 @@ mod tests {
             Message::Heartbeat,
             Message::Busy,
             Message::Get {
-                key: "speakingofbaddies".into(),
+                key: "considerthefollowing".into(),
             },
             Message::Put {
-                key: "mydmsareavailable".into(),
-                value: "now".into(),
+                key: "professionalism".into(),
+                value: "mayreflectwell".into(),
             },
             Message::Found {
-                value: "bruhyouugly".into(),
+                value: "nahiwannabegoofy".into(),
             },
             Message::NotFound,
             Message::DonePut,
@@ -149,7 +149,7 @@ mod tests {
                 .expect("Failed to write to file.");
             fake_channel
                 .seek_relative(-(MSG_SIZE as i64))
-                .expect("You seekin awful bruh.");
+                .expect("Didn't seek ahead as far as I expected");
             let bytes_read = fake_channel
                 .read(&mut read_scratch)
                 .expect("Failed to read file.");
