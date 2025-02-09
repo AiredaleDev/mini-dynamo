@@ -1,4 +1,5 @@
 use sha1::{Digest, Sha1};
+use smallvec::SmallVec;
 use std::collections::BTreeMap;
 
 pub struct RingHash {
@@ -39,13 +40,13 @@ impl RingHash {
     // A little bruh to be boxing when the size of each of these is technically
     // known at compile-time. I do NOT trust the compiler to infer that the ACTUAL
     // type is [usize; self.repl] and unbox all these slices.
-    pub fn write_group(&self, key: &str) -> Box<[usize]> {
+    pub fn write_group(&self, key: &str) -> SmallVec<[usize; 16]> {
         let key_hash = Sha1::digest(key)[..8].try_into().unwrap();
         let key_hash = usize::from_ne_bytes(key_hash);
 
         // self.repl is small so `contains` on a `Vec` will be much faster than hashing.
         // This might actually be a good case for SmallVec, no reason this can't live on the stack.
-        let mut group = Vec::with_capacity(self.repl);
+        let mut group = SmallVec::with_capacity(self.repl);
         let mut nodes_iter = self
             .ring_hash
             .iter()
@@ -59,6 +60,6 @@ impl RingHash {
             }
         }
 
-        group.into_boxed_slice()
+        group
     }
 }

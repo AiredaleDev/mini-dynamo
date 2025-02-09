@@ -1,11 +1,13 @@
 use clap::Parser;
-use std::net::SocketAddr;
+use ring_hash::RingHash;
+use std::{net::SocketAddr, sync::LazyLock};
 use tokio::net::TcpStream;
 
 mod ring_hash;
 
 struct Manager {
     nodes: Vec<Node>,
+    ring_hash: RingHash,
     reps: usize,
 }
 
@@ -81,10 +83,26 @@ async fn main() {
         nodes
     };
 
+    let mut ring_hash = RingHash::new(args.reps);
+    for i in 0..nodes.len() {
+        ring_hash.add_node(i);
+    }
+
+    // Yknow, just for the hell of it, let's use channels this time.
     let mut mgr_state = Manager {
         nodes,
+        ring_hash,
         reps: args.reps,
     };
+
+    let (state_tx, state_rx) = std::sync::mpsc::channel();
+
+    tokio::spawn({
+        let tx = state_tx.clone();
+        async move {
+            tx.send(());
+        }
+    });
 
     println!("Hello, world!");
 }

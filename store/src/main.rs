@@ -1,9 +1,9 @@
 use clap::Parser;
 use comm::{recv_msg, send_msg, Message, Result};
+use fnv::FnvHashMap;
 use rmp_serde::{from_read, Serializer};
 use serde::Serialize;
 use std::{
-    collections::HashMap,
     fs::{self, File},
     io::{Seek, SeekFrom, Write},
     net::SocketAddr,
@@ -27,8 +27,8 @@ struct StoreArgs {
 
 // TODO: Benchmark this vs Dashmap, which presumably only uses atomics like ConcurrentHashMap from
 // Java (wow imagine Java doing anything correctly...)
-static TABLE_SERVICE: LazyLock<RwLock<HashMap<String, String>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+static TABLE_SERVICE: LazyLock<RwLock<FnvHashMap<String, String>>> =
+    LazyLock::new(|| RwLock::new(FnvHashMap::default()));
 
 async fn handle_client(mut conn: TcpStream) {
     match recv_msg(&mut conn).await {

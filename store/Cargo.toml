@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 comm = { path = "../comm" }
 clap = { workspace = true }
+fnv = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 rmp-serde = { workspace = true }
